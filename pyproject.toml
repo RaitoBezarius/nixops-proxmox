@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "nixops_proxmox"
+version = "1.0"
+description = "NixOps Proxmox plugin"
+authors = ["Ryan Lahfa <ryan@lahfa.xyz>"]
+license = "LGPL-3.0-only"
+include = [ "nixops_proxmox/nix/*.nix" ]
+
+[tool.poetry.dependencies]
+python = "^3.7"
+nixops = {git = "https://github.com/NixOS/nixops.git", rev = "master"}
+typing-extensions = "^3.7.4"
+nixos-modules-contrib = {git = "https://github.com/nix-community/nixos-modules-contrib.git", rev = "master"}
+proxmoxer = "^1.1.1"
+requests = "^2.24.0"
+paramiko = "^2.7.1"
+
+[tool.poetry.dev-dependencies]
+nose = "^1.3.7"
+mypy = "^0.770"
+black = "^19.10b0"
+flake8 = "^3.8.2"
+
+[tool.poetry.plugins."nixops"]
+proxmox = "nixops_proxmox.plugin"
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"

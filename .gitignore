@@ -1,0 +1,25 @@
+*~
+.coverage
+coverage.xml
+examples/*.json
+examples/*.lock
+examples/*.nixops*
+html/
+result
+tags
+tests/test.nixops*
+examples/proxmox-info.nix
+images/image
+.mypy_cache
+
+syntax: glob
+.idea
+*egg-info
+*.log
+*.txt
+*.pyc
+*.swp
+*.csv
+*.out
+*.tar
+*.bkp

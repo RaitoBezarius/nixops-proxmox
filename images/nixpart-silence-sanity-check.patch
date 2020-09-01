@@ -1,0 +1,13 @@
+diff -u nixpart-0.4.1/nixkickstart.py nixpart-0.4.1b/nixkickstart.py
+--- nixpart-0.4.1/nixkickstart.py       2013-08-02 13:18:40.000000000 +0800
++++ nixpart-0.4.1b/nixkickstart.py      2015-11-26 10:40:35.000000000 +0800
+@@ -987,9 +987,6 @@
+         self.handler.btrfs.execute(self.storage, self.handler)
+
+     def partition(self):
+-        errors, warnings = self.storage.sanityCheck()
+-        if errors:
+-            raise PartitioningError("\n".join(errors))
+         self.storage.doIt()
+
+     def force_device_exists(self, device, child=None):

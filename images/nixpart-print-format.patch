@@ -1,0 +1,13 @@
+diff --git a/nixkickstart.py b/nixkickstart.py
+index 7d58d69..c13e138 100644
+--- a/nixkickstart.py
++++ b/nixkickstart.py
+@@ -755,6 +755,7 @@ class RaidData(commands.raid.F18_RaidData):
+                                      fsprofile=self.fsprofile,
+                                      mountpoint=self.mountpoint,
+                                      mountopts=self.fsopts)
++        print(kwargs["format"])
+         if not kwargs["format"].type:
+             raise KickstartValueError, formatErrorMsg(self.lineno, msg="The \"%s\" filesystem type is not supported." % type)
+ 
+-- 
