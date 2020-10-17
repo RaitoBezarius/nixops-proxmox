@@ -282,7 +282,6 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         while not current_status["exited"]:
             current_status = get_status()
 
-        print(current_status)
         return current_status["exitcode"], current_status.get("out-data", "")
 
     def _file_write_through_agent(self, content, filename, *, instance_id: Optional[int] = None):
@@ -350,14 +349,12 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 raise
 
         self.log_end("disk mounted")
-        print(out)
         return out
 
     def _configure_initial_nix(self, uefi: bool, instance_id: Optional[int] = None):
         self.log_start("generating the initial configuration... ")
         # 1. We generate the HW configuration and the standard configuration.
         out = self.run_command("nixos-generate-config --root /mnt", capture_stdout=True)
-        print(out)
         # 2. We will override the configuration.nix
         nixos_cfg = {
             "imports": [
@@ -387,7 +384,6 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             nixos_cfg[("boot", "loader", "grub", "devices")] = ""
 
         nixos_initial_postinstall_conf = py2nix(Function("{ config, pkgs, ... }", nixos_cfg))
-        print(nixos_initial_postinstall_conf)
         self.run_command(f"cat <<EOF > /mnt/etc/nixos/configuration.nix\n{nixos_initial_postinstall_conf}\nEOF")
         self.run_command("echo preinstall > /mnt/.install_status")
         self.log_end("initial configuration generated")
@@ -395,7 +391,6 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         out = self.run_command("nixos-install", capture_stdout=True)
         self.log_end("NixOS installed")
         self.run_command("echo installed > /mnt/.install_status")
-        print(out)
 
     def _wait_for_ip(self):
         self.log_start("waiting for at least a reachable IP address... ")
@@ -462,10 +457,23 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
     def _reinstall_host_key(self, key_type):
         self.log_start("reinstalling new host keys... ")
-        exitcode, new_key = self._execute_command_with_agent(f"cat /etc/ssh/ssh_host_{key_type}_key.pub")
-        new_key = str(new_key).rstrip()
-        if exitcode != 0:
-            raise Exception(f"Failed to read SSH host key of type '{key_type}' from Proxmox VM '{self.name}' during reinstallation")
+        attempts = 0
+
+        while True:
+            try:
+                exitcode, new_key = self._execute_command_with_agent(f"cat /etc/ssh/ssh_host_{key_type}_key.pub")
+                new_key = str(new_key).rstrip()
+                if exitcode != 0:
+                    raise Exception(f"Failed to read SSH host key of type '{key_type}' from Proxmox VM '{self.name}' during reinstallation")
+                break
+            except Exception as e:
+                # TODO: backoff exp should be used here.
+                attempts += 1
+                if attempts >= 10:
+                    raise e # bubble the error.
+                self.log(f"failed to read SSH host key (attempt {attempts + 1}/10), retrying...")
+                time.sleep(1)
+
         self._learn_known_hosts(new_key)
         self.log_end("installed")
 
@@ -515,6 +523,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 'cpulimit': defn.cpuLimit or 0,
                 'cpuunits': defn.cpuUnits or 1024,
                 'description': "NixOps-managed VM",
+                'pool': defn.pool,
                 'hotplug': defn.hotplugFeatures or "1",
                 'memory': defn.memory,
                 'onboot': to_prox_bool(defn.startOnBoot),
@@ -621,6 +630,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         self.username = defn.username
         self.password = defn.password
 
+        self.useSSH = defn.useSSH
+
         nodes = self._connect().nodes.get()
         assert len(nodes) == 1, "There is no node or multiple nodes, ensure you set 'deployment.proxmox.node' or verify your Proxmox cluster."
         self.node = defn.node or nodes[0]['node']
@@ -650,10 +661,21 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         # Create the QEMU.
         if not self.resource_id:
-            vmid = self._get_free_vmid()
-            self.log(
-                    f"creating the Proxmox VM (node {self.node}, VM id: {vmid}, memory {defn.memory}, )...")
-            vmid, instance = self.create_instance(defn, vmid)
+            created = False
+            while not created:
+                vmid = self._get_free_vmid()
+                self.log(
+                        f"creating the Proxmox VM (in node {self.node}, free supposedly VM id: {vmid}, memory {defn.memory} MiB)...")
+                try:
+                    vmid, instance = self.create_instance(defn, vmid)
+                    created = True
+                except Exception as e:
+                    if "already exist" in str(e):
+                        self.log(
+                            f"vmid collision, trying another one.")
+                    else:
+                        print('Failure', e)
+
 
             with self.depl._db:
                 self.vm_id = int(vmid)
@@ -676,24 +698,24 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         #    common_tags["Owners"] = ", ".join(defn.owners)
         # self.update_tags(self.vm_id, user_tags=common_tags, check=check)
 
-        with self.depl._db:
-            self.use_private_ip_address = True
-
         self.wait_for_qemu_agent()
         self.state = self.RESCUE if self.is_in_live_cd() else self.UP
 
         # provision ourselves through agent only if we are in a live CD.
         if self.state == self.RESCUE:
+            self.log("In live CD (rescue mode)")
             self._provision_ssh_key_through_agent()
             self.write_ssh_private_key(self.private_host_key)
+            time.sleep(1) # give some time to SSH/IP to be ready.
 
         if self.public_ip or (self.use_private_ip_address and not self.private_ip) or check:
             self._wait_for_ip()
+            time.sleep(1)
 
         if self.state == self.RESCUE:
             self.wait_for_ssh(check=check)
             # Partition table changed.
-            if self.partitions != defn.partitions:
+            if self.partitions and self.partitions != defn.partitions:
                 # TODO: use remapper.
                 if self.depl.logger.confirm("Partition table changed, do you want to re-run the partitionning phase?"):
                     self.partitioned = False

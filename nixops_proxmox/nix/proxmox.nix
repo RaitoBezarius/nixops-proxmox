@@ -179,22 +179,22 @@ in
       default = "";
       type = types.str;
       example = ''
-        autopart --type btrfs
+        wipefs -f /dev/sda
+
+        parted --script /dev/sda -- mklabel gpt
+        parted --script /dev/sda -- mkpart primary fat32 1MiB 1024MiB
+        parted --script /dev/sda -- mkpart primary btrfs 1024MiB 100%
+
+        parted --script /dev/sda -- set 1 boot on
+
+        mkfs.vfat /dev/sda1 -n NIXBOOT
+        mkfs.btrfs /dev/sda2 -f -L nixroot
+
+        mount -t btrfs /dev/sda2 /mnt
+        mkdir -p /mnt/boot && mount /dev/sda1 /mnt/boot
       '';
       description = ''
-        Partitions description using Anaconda/Kickstart format.
-        See here: <https://pykickstart.readthedocs.io/en/latest/kickstart-docs.html#chapter-2-kickstart-commands-in-fedora>
-      '';
-    };
-    deployment.proxmox.postPartitioningLocalcommands = mkOption {
-      default = null;
-      type = types.nullOr types.str;
-      example = ''
-        parted /dev/sda1 -- set boot on
-      '';
-      description = ''
-        Post-nixpart partitioning phase.
-        Can be used to fix up nixpart issues.
+        Bash partitioning script.
       '';
     };
     deployment.proxmox.disks = mkOption {
