@@ -4,6 +4,8 @@ This plugin enable you to deploy and provision NixOS machines on a Proxmox node,
 
 **Warning** : It is highly unstable and being developed right now. You can see what's lacking at the bottom of this README. Do not use in production.
 
+**2020 NixCon** : A demo will be available shorty after the talk, here and on the talk URL: <https://cfp.nixcon.org/nixcon2020/talk/7RKBTE/>
+
 # Instructions
 
 You would have to copy a `proxmox-info-example.nix` file to tailor to your Proxmox cluster.
