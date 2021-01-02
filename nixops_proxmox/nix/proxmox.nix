@@ -152,6 +152,13 @@ in
         Whether to verify the SSL certificate of the Proxmox node.
       '';
     };
+    deployment.proxmox.usePrivateIPAddress = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Whether to use the VM private IP address for management.
+      '';
+    };
     deployment.proxmox.useSSH = mkOption {
       default = false;
       type = types.bool;

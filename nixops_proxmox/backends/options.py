@@ -56,6 +56,8 @@ class ProxmoxOptions(ResourceOptions):
     arch: Optional[str]
     expertArgs: Optional[str]
 
+    usePrivateIPAddress: bool
+
 
 class ProxmoxMachineOptions(MachineOptions):
     proxmox: ProxmoxOptions

@@ -49,7 +49,7 @@ class VirtualMachineDefinition(MachineDefinition):
                 'cpuLimit', 'cpuUnits', 'cpuType', 'arch',
                 'postPartitioningLocalCommands',
                 'partitions', 'expertArgs', 'installISO', 'network',
-                'uefi', 'useSSH'):
+                'uefi', 'useSSH', 'usePrivateIPAddress'):
             setattr(self, key, getattr(self.config.proxmox, key))
 
         if not self.serverUrl:
@@ -636,6 +636,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         self.tokenValue = defn.tokenValue
 
         self.useSSH = defn.useSSH
+
+        self.use_private_ip_address = defn.usePrivateIPAddress
 
         nodes = self._connect().nodes.get()
         assert len(nodes) == 1, "There is no node or multiple nodes, ensure you set 'deployment.proxmox.node' or verify your Proxmox cluster."
