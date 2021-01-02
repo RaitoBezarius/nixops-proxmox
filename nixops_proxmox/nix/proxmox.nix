@@ -145,6 +145,13 @@ in
         It is better to use an API token or SSH authentication!
       '';
     };
+    deployment.proxmox.verifySSL = mkOption {
+      default = false;
+      type = types.bool;
+      description = ''
+        Whether to verify the SSL certificate of the Proxmox node.
+      '';
+    };
     deployment.proxmox.useSSH = mkOption {
       default = false;
       type = types.bool;
