@@ -256,9 +256,16 @@ in
       description = "CPU type string";
     };
     deployment.proxmox.arch = mkOption {
-      type = types.str;
-      default = "x86_64";
-      description = "QEMU architecture (supports only aarch64 or x86_64)";
+      type = types.nullOr (types.enum [ "aarch64" "x86_64" ]);
+      default = null;
+      description = ''
+        QEMU architecture.
+
+        The default value will not pass anything in the Proxmox API request.
+        Usage of this option is only permitted to the <literal>root</literal>
+        user by the Proxmox API and only when using username/password
+        authentication.
+      '';
     };
     deployment.proxmox.expertArgs = mkOption {
       type = types.nullOr types.str;

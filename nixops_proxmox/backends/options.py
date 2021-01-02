@@ -53,7 +53,7 @@ class ProxmoxOptions(ResourceOptions):
     cpuLimit: Optional[int]
     cpuUnits: Optional[int]
     cpuType: str
-    arch: str
+    arch: Optional[str]
     expertArgs: Optional[str]
 
 

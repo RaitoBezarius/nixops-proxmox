@@ -515,7 +515,6 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 # 'tags': (','.join(tags)),
                 'agent': "enabled=1,type=virtio",
                 'vga': 'qxl',
-                'arch': defn.arch,
                 'args': defn.expertArgs,
                 'bios': ("ovmf" if defn.uefi.enable else "seabios"),
                 'cores': defn.nbCores or 1,
@@ -536,6 +535,9 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 'unique': 1,
                 'archive': 0,
         }
+
+        if defn.arch is not None:
+            options[f"arch"] = defn.arch
 
         for index, net in enumerate(defn.network):
             options[f"net{index}"] = (",".join(
