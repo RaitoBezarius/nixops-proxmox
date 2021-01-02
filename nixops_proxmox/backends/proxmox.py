@@ -630,6 +630,9 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         self.username = defn.username
         self.password = defn.password
 
+        self.tokenName = defn.tokenName
+        self.tokenValue = defn.tokenValue
+
         self.useSSH = defn.useSSH
 
         nodes = self._connect().nodes.get()
