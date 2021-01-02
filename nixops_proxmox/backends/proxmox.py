@@ -381,7 +381,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             }
         else:
             # Use nix2py to read self.fs_info.
-            nixos_cfg[("boot", "loader", "grub", "devices")] = ""
+            nixos_cfg[("boot", "loader", "grub", "devices")] = [ "/dev/sda" ];
 
         nixos_initial_postinstall_conf = py2nix(Function("{ config, pkgs, ... }", nixos_cfg))
         self.run_command(f"cat <<EOF > /mnt/etc/nixos/configuration.nix\n{nixos_initial_postinstall_conf}\nEOF")
