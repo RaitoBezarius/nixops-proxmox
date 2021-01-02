@@ -571,7 +571,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             self._allocate_disk_image(filename, disk.size, disk.volume, vmid)
             max_indexes[disk.volume] += 1
 
-        if defn.uefi:
+        if defn.uefi and defn.uefi.enable:
             filename = f'vm-{vmid}-disk-{max_indexes[defn.uefi.volume] + 1}'
             options['efidisk0'] = f'{defn.uefi.volume}:{filename}'
             self._allocate_disk_image(filename,
