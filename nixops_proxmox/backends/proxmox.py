@@ -49,7 +49,7 @@ class VirtualMachineDefinition(MachineDefinition):
                 'cpuLimit', 'cpuUnits', 'cpuType', 'arch',
                 'postPartitioningLocalCommands',
                 'partitions', 'expertArgs', 'installISO', 'network',
-                'uefi', 'useSSH'):
+                'uefi', 'useSSH', 'usePrivateIPAddress'):
             setattr(self, key, getattr(self.config.proxmox, key))
 
         if not self.serverUrl:
@@ -381,7 +381,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             }
         else:
             # Use nix2py to read self.fs_info.
-            nixos_cfg[("boot", "loader", "grub", "devices")] = ""
+            nixos_cfg[("boot", "loader", "grub", "devices")] = [ "/dev/sda" ];
 
         nixos_initial_postinstall_conf = py2nix(Function("{ config, pkgs, ... }", nixos_cfg))
         self.run_command(f"cat <<EOF > /mnt/etc/nixos/configuration.nix\n{nixos_initial_postinstall_conf}\nEOF")
@@ -515,7 +515,6 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 # 'tags': (','.join(tags)),
                 'agent': "enabled=1,type=virtio",
                 'vga': 'qxl',
-                'arch': defn.arch,
                 'args': defn.expertArgs,
                 'bios': ("ovmf" if defn.uefi.enable else "seabios"),
                 'cores': defn.nbCores or 1,
@@ -536,6 +535,9 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 'unique': 1,
                 'archive': 0,
         }
+
+        if defn.arch is not None:
+            options[f"arch"] = defn.arch
 
         for index, net in enumerate(defn.network):
             options[f"net{index}"] = (",".join(
@@ -571,7 +573,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             self._allocate_disk_image(filename, disk.size, disk.volume, vmid)
             max_indexes[disk.volume] += 1
 
-        if defn.uefi:
+        if defn.uefi and defn.uefi.enable:
             filename = f'vm-{vmid}-disk-{max_indexes[defn.uefi.volume] + 1}'
             options['efidisk0'] = f'{defn.uefi.volume}:{filename}'
             self._allocate_disk_image(filename,
@@ -630,7 +632,12 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         self.username = defn.username
         self.password = defn.password
 
+        self.tokenName = defn.tokenName
+        self.tokenValue = defn.tokenValue
+
         self.useSSH = defn.useSSH
+
+        self.use_private_ip_address = defn.usePrivateIPAddress
 
         nodes = self._connect().nodes.get()
         assert len(nodes) == 1, "There is no node or multiple nodes, ensure you set 'deployment.proxmox.node' or verify your Proxmox cluster."

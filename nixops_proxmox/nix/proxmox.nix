@@ -145,6 +145,20 @@ in
         It is better to use an API token or SSH authentication!
       '';
     };
+    deployment.proxmox.verifySSL = mkOption {
+      default = false;
+      type = types.bool;
+      description = ''
+        Whether to verify the SSL certificate of the Proxmox node.
+      '';
+    };
+    deployment.proxmox.usePrivateIPAddress = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Whether to use the VM private IP address for management.
+      '';
+    };
     deployment.proxmox.useSSH = mkOption {
       default = false;
       type = types.bool;
@@ -256,9 +270,16 @@ in
       description = "CPU type string";
     };
     deployment.proxmox.arch = mkOption {
-      type = types.str;
-      default = "x86_64";
-      description = "QEMU architecture (supports only aarch64 or x86_64)";
+      type = types.nullOr (types.enum [ "aarch64" "x86_64" ]);
+      default = null;
+      description = ''
+        QEMU architecture.
+
+        The default value will not pass anything in the Proxmox API request.
+        Usage of this option is only permitted to the <literal>root</literal>
+        user by the Proxmox API and only when using username/password
+        authentication.
+      '';
     };
     deployment.proxmox.expertArgs = mkOption {
       type = types.nullOr types.str;
