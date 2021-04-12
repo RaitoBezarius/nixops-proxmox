@@ -45,10 +45,19 @@ def first_reachable_or_none(logger, S, user: str = "root", timeout_per_ip: int =
         if can_reach(logger, ip, user, timeout_per_ip, callback):
             return ip
 
+profile_fields_mapping = {
+    'server_url': 'serverUrl',
+    'token_name': 'tokenName',
+    'token_value': 'tokenValue',
+    'use_ssh': 'useSSH'
+}
+
 class VirtualMachineDefinition(MachineDefinition):
     """Definition of a Proxmox VM"""
 
     config: ProxmoxMachineOptions
+    profile: Optional[str]
+    serverUrl: Optional[str]
 
     @classmethod
     def get_type(cls):
@@ -57,7 +66,7 @@ class VirtualMachineDefinition(MachineDefinition):
     def __init__(self, name, config):
         super().__init__(name, config)
 
-        for key in ('serverUrl', 'username', 'tokenName',
+        for key in ('profile', 'serverUrl', 'username', 'tokenName',
                 'tokenValue', 'password', 'useSSH', 'disks',
                 'node', 'pool', 'nbCpus', 'nbCores', 'memory',
                 'startOnBoot', 'protectVM', 'hotplugFeatures',
@@ -68,8 +77,17 @@ class VirtualMachineDefinition(MachineDefinition):
                 'uefi', 'useSSH', 'usePrivateIPAddress'):
             setattr(self, key, getattr(self.config.proxmox, key))
 
+        self.read_from_profile()
+
         if not self.serverUrl:
             raise Exception("No server URL defined for Proxmox machine: {0}!".format(self.name))
+
+    def read_from_profile(self):
+        if self.profile is not None:
+            credentials = nixops_proxmox.proxmox_utils.read_proxmox_profile(self.profile)
+            for attr in ('server_url', 'username', 'password', 'token_name', 'token_value', 'use_ssh'):
+                if attr in credentials:
+                    setattr(self, profile_fields_mapping.get(attr, attr), credentials[attr])
 
     def show_type(self):
         return "{0} [{1}]".format(self.get_type(), self.serverUrl)
@@ -665,8 +683,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         self.set_common_state(defn)
 
+        self.profile = defn.profile
         self.serverUrl = defn.serverUrl
-        assert self.serverUrl is not None, "There is no Proxmox server URL set, set 'deployment.proxmox.serverUrl'"
 
         self.username = defn.username
         self.password = defn.password
@@ -675,6 +693,17 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         self.tokenValue = defn.tokenValue
 
         self.useSSH = defn.useSSH
+
+        if self.profile is not None:
+            credentials = nixops_proxmox.proxmox_utils.read_proxmox_profile(self.profile)
+            for attr in ('serverUrl', 'username', 'password', 'tokenName', 'tokenValue', 'useSSH'):
+                local_attr_name = profile_fields_mapping.get(attr, attr)
+                if local_attr_name in credentials and getattr(self, local_attr_name, None) is not None:
+                    self.warn(f'`{local_attr_name}` is already set in the profile: {self.profile}, its Nix expression value will be ignored.')
+                if attr in credentials:
+                    setattr(self, local_attr_name, credentials[attr])
+
+        assert self.serverUrl is not None, "There is no Proxmox server URL set, set 'deployment.proxmox.serverUrl'"
 
         self.use_private_ip_address = defn.usePrivateIPAddress
 

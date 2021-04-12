@@ -28,8 +28,9 @@ class UefiOptions(ResourceOptions):
     volume: str
 
 class ProxmoxOptions(ResourceOptions):
-    serverUrl: str
-    username: str
+    profile: Optional[str]
+    serverUrl: Optional[str]
+    username: Optional[str]
     password: Optional[str]
     tokenName: Optional[str]
     tokenValue: Optional[str]
