@@ -286,6 +286,11 @@ in
       default = null;
       description = "Raw QEMU options, for experts only!";
     };
+    deployment.proxmox.vmid = mkOption {
+      type = types.nullOr types.int;
+      default = null;
+      description = "Virtual machine ID for Proxmox, if not provided, an attempt to grab a free VM id is performed.";
+    };
     deployment.proxmox.installISO = mkOption {
       type = types.str;
       description = ''

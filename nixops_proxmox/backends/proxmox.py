@@ -8,27 +8,42 @@ from ipaddress import ip_address, IPv4Address, IPv6Address
 from itertools import dropwhile, takewhile, chain
 import nixops_proxmox.proxmox_utils
 from proxmoxer.core import ResourceException
-from nixops.ssh_util import SSHCommandFailed
+from nixops.ssh_util import SSHCommandFailed, SSH
+import nixops.util
 from urllib.parse import quote
+from functools import partial
 from collections import defaultdict
 from .options import ProxmoxMachineOptions, DiskOptions, NetworkOptions, UefiOptions
 
 def to_prox_bool(b):
     return 1 if b else 0
 
-def can_reach(ip):
-    # TODO: try ssh.
-    return not ip_address(ip).is_link_local
+# TODO: remove the dependency on the machine logger
+# I'd like to code-reuse SSH/SSHMaster but that requires decoupling the logger.
+def try_ssh(user, ip, logger) -> bool:
+    ssh = SSH(logger)
+    ssh.register_host_fun(lambda: ip)
+    ssh.register_flag_fun(lambda: ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"])
+    # TODO: such hacky, wow.
+    ssh.register_passwd_fun(lambda: "")
+    try:
+        ssh.run_command("true", user, logged=False, timeout=3)
+        return True
+    except Exception:
+        return False
 
-def first_or_none(S):
-    if not S:
-        return None
+def can_reach(logger, ip, user: str = "root", timeout: int = 10, callback = None):
+    # TODO: in that case, we need to determine the correct link, is there a way?
+    if ip_address(ip).is_link_local:
+        return False
 
-    return S.pop()
+    return nixops.util.wait_for_success(partial(try_ssh, user, ip, logger), timeout, callback)
 
-def first_reachable_or_none(S):
-    # TODO: compute.
-    return first_or_none(S)
+def first_reachable_or_none(logger, S, user: str = "root", timeout_per_ip: int = 10, callback = None):
+    for ip in S:
+        logger.log("testing {}".format(ip))
+        if can_reach(logger, ip, user, timeout_per_ip, callback):
+            return ip
 
 class VirtualMachineDefinition(MachineDefinition):
     """Definition of a Proxmox VM"""
@@ -47,6 +62,7 @@ class VirtualMachineDefinition(MachineDefinition):
                 'node', 'pool', 'nbCpus', 'nbCores', 'memory',
                 'startOnBoot', 'protectVM', 'hotplugFeatures',
                 'cpuLimit', 'cpuUnits', 'cpuType', 'arch',
+                'vmid',
                 'postPartitioningLocalCommands',
                 'partitions', 'expertArgs', 'installISO', 'network',
                 'uefi', 'useSSH', 'usePrivateIPAddress'):
@@ -365,7 +381,9 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             ],
             ("services", "openssh", "enable"): True,
             ("services", "qemuGuest", "enable"): True,
-            ("services", "mingetty", "autologinUser"): "root",
+            ("systemd", "services", "qemu-guest-agent", "serviceConfig", "RuntimeDirectory"): "qemu-ga",
+            ("systemd", "services", "qemu-guest-agent", "serviceConfig", "ExecStart"): RawValue("lib.mkForce \"\\${pkgs.qemu.ga}/bin/qemu-ga -t /var/run/qemu-ga\""),
+            ("services", "getty", "autologinUser"): "root",
             ("networking", "firewall", "allowedTCPPorts"): [ 22 ],
             ("users", "users", "root"): {
                 ("openssh", "authorizedKeys", "keys"): [ self.public_host_key ],
@@ -383,12 +401,12 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             # Use nix2py to read self.fs_info.
             nixos_cfg[("boot", "loader", "grub", "devices")] = [ "/dev/sda" ];
 
-        nixos_initial_postinstall_conf = py2nix(Function("{ config, pkgs, ... }", nixos_cfg))
+        nixos_initial_postinstall_conf = py2nix(Function("{ config, pkgs, lib, ... }", nixos_cfg))
         self.run_command(f"cat <<EOF > /mnt/etc/nixos/configuration.nix\n{nixos_initial_postinstall_conf}\nEOF")
         self.run_command("echo preinstall > /mnt/.install_status")
         self.log_end("initial configuration generated")
         self.log_start("installing NixOS... ")
-        out = self.run_command("nixos-install", capture_stdout=True)
+        out = self.run_command("nixos-install --no-root-passwd", capture_stdout=True)
         self.log_end("NixOS installed")
         self.run_command("echo installed > /mnt/.install_status")
 
@@ -406,7 +424,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             if not potential_ips:
                 return False
 
-            return any((can_reach(i['ip-address']) for i in potential_ips))
+            return any((can_reach(self.logger, i['ip-address'], self.ssh_user) for i in potential_ips))
 
         while True:
             instance = self._get_instance(update=True)
@@ -434,10 +452,10 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         ip_v4 = {str(ip) for ip in ip_addresses if isinstance(ip, IPv4Address)}
 
         with self.depl._db:
-            self.private_ipv4 = first_reachable_or_none(private_ips & ip_v4)
-            self.public_ipv4 = first_reachable_or_none(public_ips & ip_v4)
-            self.private_ipv6 = first_reachable_or_none(private_ips & ip_v6)
-            self.public_ipv6 = first_reachable_or_none(public_ips & ip_v6)
+            self.private_ipv4 = first_reachable_or_none(self.logger, private_ips & ip_v4)
+            self.public_ipv4 = first_reachable_or_none(self.logger, public_ips & ip_v4)
+            self.private_ipv6 = first_reachable_or_none(self.logger, private_ips & ip_v6)
+            self.public_ipv6 = first_reachable_or_none(self.logger, public_ips & ip_v6)
             self.ssh_pinged = False
 
         self.log_end(
@@ -500,7 +518,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         # tags.update(defn.tags)
         # tags.update(self.get_common_tags())
 
-        if not self.public_host_key:
+        if not self.public_host_key or self.provision_ssh_key:
+            self.log_start("generating new SSH key pair... ")
             (private, public) = nixops.util.create_key_pair(
                     type=defn.host_key_type()
             )
@@ -508,6 +527,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             with self.depl._db:
                 self.public_host_key = public
                 self.private_host_key = private
+
+            self.log_end("done")
 
         options = {
                 'vmid': vmid,
@@ -598,16 +619,34 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
     def wait_for_running(self):
         instance = self._get_instance(update=True)
+        if instance['status'] == 'running':
+            return
+
+        self.log_start("waiting for the VM to be running... ")
         while instance['status'] != 'running':
             time.sleep(1)
             instance = self._get_instance(update=True)
+        self.log_end("running.")
 
-    def wait_for_qemu_agent(self):
+    def wait_for_qemu_agent(self, callback=None):
         self.wait_for_running()
+        if self._qemu_agent_is_running():
+            return
+
+        if not callback:
+            self.log_start("waiting for the QEMU agent to be ready... ")
+
         while not self._qemu_agent_is_running():
+            if callback:
+                callback()
             time.sleep(1)
 
+        if not callback:
+            self.log_end("ready.")
+
     def _postinstall(self, key_type, check):
+        # Re-compute current addresses.
+        self._wait_for_ip()
         # Re-install new host key.
         self._reinstall_host_key(key_type)
         self.write_ssh_private_key(self.private_host_key)
@@ -669,8 +708,9 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         # Create the QEMU.
         if not self.resource_id:
             created = False
+            has_user_vmid = defn.vmid is not None
             while not created:
-                vmid = self._get_free_vmid()
+                vmid = defn.vmid or self._get_free_vmid()
                 self.log(
                         f"creating the Proxmox VM (in node {self.node}, free supposedly VM id: {vmid}, memory {defn.memory} MiB)...")
                 try:
@@ -678,8 +718,12 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                     created = True
                 except Exception as e:
                     if "already exist" in str(e):
-                        self.log(
-                            f"vmid collision, trying another one.")
+                        if has_user_vmid:
+                            raise Exception(
+                            f"user provided vmid is not free, fatal error.")
+                        else:
+                            self.log(
+                                f"vmid collision, trying another one.")
                     else:
                         print('Failure', e)
 
@@ -720,6 +764,9 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             time.sleep(1)
 
         if self.state == self.RESCUE:
+            self.log("Initial installation in rescue mode")
+            old_ssh_user = self.ssh_user
+            self.ssh_user = "root"
             self.wait_for_ssh(check=check)
             # Partition table changed.
             if self.partitions and self.partitions != defn.partitions:
@@ -738,13 +785,18 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                     self.wait_for_ssh(check=check)
             self._configure_initial_nix(defn.uefi.enable)
             self.reboot()
-            time.sleep(1)
             self.wait_for_qemu_agent()
             self._postinstall(defn.host_key_type(), check)
+            self.ssh_user = old_ssh_user
 
         # Maybe, we installed but the process has crashed before.
         if self.state != self.RESCUE and not self.installed:
+            self.log_start("Resuming the post-installation... ")
+            old_ssh_user = self.ssh_user
+            self.ssh_user = "root"
             self._postinstall(defn.host_key_type(), check)
+            self.log_end("Post-installed")
+            self.ssh_user = old_ssh_user
 
         if self.first_boot and self.installed:
             self.first_boot = False
@@ -826,9 +878,9 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         self._connect_vm().status.start()
         self.state = self.STARTING
-        with self._check_ip_changes() as addresses:
+        with self._check_ip_changes() as old_addresses:
             self._wait_for_ip()
-            self._warn_for_ip_changes(addresses)
+            self._warn_for_ip_changes(old_addresses)
         self.wait_for_ssh(check=True)
         self.send_keys()
 
@@ -847,14 +899,29 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         res.exists = True
 
-        if instance.state == "running":
+        if instance["status"] == "running":
             res.is_up = True
             res.disks_ok = True
-            # TODO: check IP and adjust.
+            #with self._check_ip_changes() as addresses:
+            #    self._wait_for_ip()
+            #    self._warn_for_ip_changes(addresses)
             super()._check(res)
-        elif instance.state == "stopped":
+        elif instance["status"] == "stopped":
             res.is_up = False
             self.state = self.STOPPED
+
+    def reboot_sync(self, hard: bool = False):
+        self.reboot(hard=hard)
+
+        self.log_start("waiting for the machine to finish rebooting... ")
+        def progress_cb() -> None:
+            self.log_continue(".")
+
+        self.wait_for_down(callback=progress_cb)
+        self.log_continue("[down] ")
+        self.wait_for_qemu_agent(callback=progress_cb)
+        self.log_end("[qemu agent up]")
+
 
     def reboot(self, hard: bool = False):
         self.log("rebooting Proxmox VM machine...")
