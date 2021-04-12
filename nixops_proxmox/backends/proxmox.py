@@ -698,8 +698,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             credentials = nixops_proxmox.proxmox_utils.read_proxmox_profile(self.profile)
             for attr in ('serverUrl', 'username', 'password', 'tokenName', 'tokenValue', 'useSSH'):
                 local_attr_name = profile_fields_mapping.get(attr, attr)
-                if local_attr_name in credentials and getattr(self, local_attr_name, None) is not None:
-                    self.warn(f'`{local_attr_name}` is already set in the profile: {self.profile}, its Nix expression value will be ignored.')
+                if local_attr_name in credentials and getattr(defn, local_attr_name, None) is not None:
+                    self.warn(f'`{local_attr_name}` is already set in the `{self.profile}` profile, its Nix expression value will be ignored.')
                 if attr in credentials:
                     setattr(self, local_attr_name, credentials[attr])
 
