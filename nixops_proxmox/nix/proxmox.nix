@@ -107,20 +107,35 @@ let
 in
 {
   options = {
+    deployment.proxmox.profile = mkOption {
+      example = "production1";
+      type = types.nullOr types.str;
+      description = ''
+        A Proxmox profile, contained in $PROXMOX_CREDENTIALS_FILE
+        which defaults to $XDG_CONFIG_FILE/.proxmox/credentials.
+
+        A mechanism similar to ~/.aws/credentials
+        You can have a TOML containing server_url, username, token_name, token_value, use_ssh.
+        In a way that makes sense and it will be used, this avoids pushing secrets.
+      '';
+      default = null;
+    };
     deployment.proxmox.serverUrl = mkOption {
       example = "https://my-proxmox-ip:8006/api/…";
-      type = types.str;
+      type = types.nullOr types.str;
       description = ''
         The Proxmox API endpoint URL.
         Mandatory.
       '';
+      default = null;
     };
     deployment.proxmox.username = mkOption {
-      type = types.str;
+      type = types.nullOr types.str;
       description = ''
         The Proxmox account username.
         Must have the correct rights to perform the operations.
       '';
+      default = null;
     };
     deployment.proxmox.tokenName = mkOption {
       type = types.nullOr types.str;
@@ -302,6 +317,7 @@ in
   };
 
   config = mkIf (config.deployment.targetEnv == "proxmox") {
+    # TODO: assert that there is at least a valid option for authentication.
     nixpkgs.system = mkOverride 900 (if cfg.arch == "aarch64" then "aarch64-linux" else "x86_64-linux");
   };
 }

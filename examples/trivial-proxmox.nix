@@ -4,7 +4,7 @@
     let
       mkSubvolume = mp: name: "btrfs subvolume create ${mp}/${name}";
     in
-    { imports = [ ./proxmox-info.nix ./proxmox-uefi.nix ];
+    { imports = [ ./proxmox-profile.nix ./proxmox-uefi.nix ];
 
     networking.hostName = "nixops-success";
 

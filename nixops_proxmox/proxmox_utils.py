@@ -2,8 +2,40 @@
 
 import proxmoxer.backends.https
 from proxmoxer import ProxmoxAPI
-from typing import Optional, List
+from typing import Optional, List, Dict
 import socket
+import os
+import toml
+
+
+def get_xdg_config_home() -> str:
+    home = os.environ.get('HOME', None)
+    if home is None:
+        raise RuntimeError("This platform is not POSIX compliant, "
+                           "cannot get $HOME.")
+
+    return os.environ.get('XDG_CONFIG_HOME',
+                          os.path.join(home, '.config'))
+
+
+def read_proxmox_profile(profile_name: str) -> Dict[str, str]:
+    credentials_file_path = os.environ.get('PROXMOX_CREDENTIALS_FILE',
+                                           os.path.join(
+                                               get_xdg_config_home(),
+                                               'proxmox', 'credentials'))
+
+    try:
+        with open(credentials_file_path, 'r') as cred_file:
+            profiles = toml.load(cred_file)
+    except OSError as exc:
+        print(f'Failed to open credentials file ({credentials_file_path}) '
+              'for profile `{profile_name}`, verify if the file exists and/or'
+              'permissions.')
+        raise exc
+    if profile_name not in profiles:
+        raise RuntimeError(
+            f"{credentials_file_path} has no such profile `{profile_name}`")
+    return profiles[profile_name]
 
 def connect(
         server_url: str,
