@@ -1,5 +1,6 @@
 #!/usr/bin/env nix-shell
 #! nix-shell -i bash -p dasel
+# TODO: finish me.
 CONFIGURATION_FILE=${PROXMOX_CREDENTIALS_FILE:-$XDG_CONFIG_HOME/proxmox/credentials}
 function put_string() {
 	dasel put string -p toml -f "${CONFIGURATION_FILE}" "$@"
