@@ -77,18 +77,6 @@ class VirtualMachineDefinition(MachineDefinition):
                 'uefi', 'useSSH', 'usePrivateIPAddress'):
             setattr(self, key, getattr(self.config.proxmox, key))
 
-        self.read_from_profile()
-
-        if not self.serverUrl:
-            raise Exception("No server URL defined for Proxmox machine: {0}!".format(self.name))
-
-    def read_from_profile(self):
-        if self.profile is not None:
-            credentials = nixops_proxmox.proxmox_utils.read_proxmox_profile(self.profile)
-            for attr in ('server_url', 'username', 'password', 'token_name', 'token_value', 'use_ssh'):
-                if attr in credentials:
-                    setattr(self, profile_fields_mapping.get(attr, attr), credentials[attr])
-
     def show_type(self):
         return "{0} [{1}]".format(self.get_type(), self.serverUrl)
 
@@ -677,6 +665,20 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
     def after_activation(self, defn):
         pass
 
+    def read_from_profile(self, defn: VirtualMachineDefinition) -> bool:
+        if self.profile is not None:
+            credentials = nixops_proxmox.proxmox_utils.read_proxmox_profile(self.profile)
+            for attr in ('server_url', 'username', 'password', 'token_name', 'token_value', 'use_ssh'):
+                local_attr_name = profile_fields_mapping.get(attr, attr)
+                if local_attr_name in credentials and getattr(defn, local_attr_name, None) is not None:
+                    self.warn(f'`{local_attr_name}` is already set in the `{self.profile}` profile, its Nix expression value will be ignored.')
+                if attr in credentials:
+                    setattr(self, local_attr_name, credentials[attr])
+
+            return True
+        else:
+            return False
+
     def create(self, defn: VirtualMachineDefinition, check, allow_reboot, allow_recreate):
         if self.state != self.UP:
             check = True
@@ -694,22 +696,18 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         self.useSSH = defn.useSSH
 
-        if self.profile is not None:
-            credentials = nixops_proxmox.proxmox_utils.read_proxmox_profile(self.profile)
-            for attr in ('serverUrl', 'username', 'password', 'tokenName', 'tokenValue', 'useSSH'):
-                local_attr_name = profile_fields_mapping.get(attr, attr)
-                if local_attr_name in credentials and getattr(defn, local_attr_name, None) is not None:
-                    self.warn(f'`{local_attr_name}` is already set in the `{self.profile}` profile, its Nix expression value will be ignored.')
-                if attr in credentials:
-                    setattr(self, local_attr_name, credentials[attr])
-
-        assert self.serverUrl is not None, "There is no Proxmox server URL set, set 'deployment.proxmox.serverUrl'"
+        has_profile = self.read_from_profile(defn)
+        assert self.serverUrl is not None, "There is no Proxmox server URL set{0}, set `deployment.proxmox.serverUrl` or a valid `deployment.proxmox.profile`".format(' (using a profile)' if has_profile else '')
 
         self.use_private_ip_address = defn.usePrivateIPAddress
 
         nodes = self._connect().nodes.get()
-        assert len(nodes) == 1, "There is no node or multiple nodes, ensure you set 'deployment.proxmox.node' or verify your Proxmox cluster."
+        assert len(nodes) == 1 or defn.node is not None, "There is no node or multiple nodes, ensure you set 'deployment.proxmox.node' or verify your Proxmox cluster."
         self.node = defn.node or nodes[0]['node']
+
+        # check if there is actually the right pool
+        pools = self._connect().pools.get()
+        assert defn.pool is None or defn.pool in [pool['poolid'] for pool in pools], "There is no pool named `{0}`, ensure you set `deployment.proxmox.pool` to a valid value or verify your Proxmox user permissions or cluster.".format(defn.pool)
 
         # self.private_key_file = defn.private_key or None
 
