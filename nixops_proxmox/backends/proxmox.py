@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import time
+import json
 from nixops.backends import MachineDefinition, MachineState
 from nixops.nix_expr import Function, Call, RawValue, py2nix
 from typing import Optional
@@ -720,7 +721,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         if async_update_kwargs:
             async_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
-            self._connect_vm(instance_id).config.post(async_update_kwargs)
+            self._connect_vm(instance_id).config.post(json.dumps(async_update_kwargs))
             self.log(
                 f"Proxmox VM '{self.name}' physical definition was re-applied asynchronously")
 
@@ -728,7 +729,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         # TODO: what is an operation that have to be done synchronously?
         if sync_update_kwargs:
             sync_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
-            self._connect_vm(instance_id).config.put(sync_update_kwargs)
+            self._connect_vm(instance_id).config.put(json.dumps(sync_update_kwargs))
             self.log(
                 f"Proxmox VM '{self.name}' physical definition was re-applied synchronously")
 
