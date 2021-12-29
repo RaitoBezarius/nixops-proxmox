@@ -969,9 +969,9 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         self._connect_vm().status.start()
         self.state = self.STARTING
-        with self._check_ip_changes() as old_addresses:
-            self._wait_for_ip()
-            self._warn_for_ip_changes(old_addresses)
+        #with self._check_ip_changes() as old_addresses:
+        #    self._wait_for_ip()
+        #    self._warn_for_ip_changes(old_addresses)
         self.wait_for_ssh(check=True)
         self.send_keys()
 
