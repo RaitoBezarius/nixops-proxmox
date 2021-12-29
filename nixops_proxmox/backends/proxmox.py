@@ -967,7 +967,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
     def start(self):
         self.log("starting Proxmox VM machine...")
 
-        self._connect_vm().status.start()
+        self._connect_vm().status.start.post()
         self.state = self.STARTING
         self.wait_for_qemu_agent()
         self._wait_for_ip()
