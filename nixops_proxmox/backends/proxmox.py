@@ -700,17 +700,17 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         # TODO: DRYme with a change engine, maybe the already existing one in NixOps 2.
         if defn.memory != cur_memory:
-            async_update_kwargs['memory'] = defn.memory
+            sync_update_kwargs['memory'] = defn.memory
             self.log(
                 f"Proxmox VM '{self.name}' changed memory from '{cur_memory}' to '{defn.memory}' MiB")
 
         if defn.nbCpus != cur_cpus:
-            async_update_kwargs['sockets'] = defn.nbCpus
+            sync_update_kwargs['sockets'] = defn.nbCpus
             self.log(
                 f"Proxmox VM '{self.name}' changed number of sockets from '{cur_cpus}' to '{defn.nbCpus}'")
 
         if defn.nbCores != cur_cores:
-            async_update_kwargs['cores'] = defn.nbCores
+            sync_update_kwargs['cores'] = defn.nbCores
             self.log(
                 f"Proxmox VM '{self.name}' changed number of cores from '{cur_cores}' to '{defn.nbCores}'")
 
@@ -721,7 +721,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         if async_update_kwargs:
             async_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
-            self._connect_vm(instance_id).config.post(json.dumps(async_update_kwargs))
+            self._connect_vm(instance_id).config.post(**async_update_kwargs)
             self.log(
                 f"Proxmox VM '{self.name}' physical definition was re-applied asynchronously")
 
@@ -729,7 +729,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         # TODO: what is an operation that have to be done synchronously?
         if sync_update_kwargs:
             sync_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
-            self._connect_vm(instance_id).config.put(json.dumps(sync_update_kwargs))
+            self._connect_vm(instance_id).config.put(**sync_update_kwargs)
             self.log(
                 f"Proxmox VM '{self.name}' physical definition was re-applied synchronously")
 
