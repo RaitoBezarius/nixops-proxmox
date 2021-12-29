@@ -709,7 +709,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 f"Proxmox VM '{self.name}' changed number of sockets from '{cur_cpus}' to '{defn.nbCpus}'")
 
         if defn.nbCores != cur_cores:
-            sync_update_kwargs['cores'] = defn.cores
+            sync_update_kwargs['cores'] = defn.nbCores
             self.log(
                 f"Proxmox VM '{self.name}' changed number of cores from '{cur_cores}' to '{defn.nbCores}'")
 
