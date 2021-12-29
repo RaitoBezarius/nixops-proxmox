@@ -969,6 +969,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         self._connect_vm().status.start()
         self.state = self.STARTING
+        self.wait_for_qemu_agent()
+        self._wait_for_ip()
         #with self._check_ip_changes() as old_addresses:
         #    self._wait_for_ip()
         #    self._warn_for_ip_changes(old_addresses)
@@ -993,6 +995,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         if instance["status"] == "running":
             res.is_up = True
             res.disks_ok = True
+            self.wait_for_qemu_agent()
+            self._wait_for_ip()
             #with self._check_ip_changes() as addresses:
             #    self._wait_for_ip()
             #    self._warn_for_ip_changes(addresses)
