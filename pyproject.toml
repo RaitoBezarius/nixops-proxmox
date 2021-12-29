@@ -11,7 +11,7 @@ python = "^3.7"
 nixops = {git = "https://github.com/NixOS/nixops.git", rev = "master"}
 typing-extensions = "^3.7.4"
 nixos-modules-contrib = {git = "https://github.com/nix-community/nixos-modules-contrib.git", rev = "master"}
-proxmoxer = "^1.1.1"
+proxmoxer = "^1.2.0"
 requests = "^2.24.0"
 paramiko = "^2.7.1"
 toml = "^0.10.2"
