@@ -711,6 +711,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             self.log(
                 f"Proxmox VM '{self.name}' changed number of cores from '{cur_cores}' to '{defn.nbCores}'")
 
+
         # TODO: handle network interfaces
         # TODO: handle disks
         # TODO: handle misc, e.g. name, numa, onboot, ostype, protection, rng0, serial, smbios1, bios type, startup.
@@ -721,6 +722,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 f"Proxmox VM '{self.name}' physical definition was re-applied asynchronously")
 
         if sync_update_kwargs:
+            sync_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
             self._connect_vm(instance_id).config.put(sync_update_kwargs)
             self.log(
                 f"Proxmox VM '{self.name}' physical definition was re-applied synchronously")
