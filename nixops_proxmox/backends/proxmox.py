@@ -699,17 +699,17 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         # TODO: DRYme with a change engine, maybe the already existing one in NixOps 2.
         if defn.memory != cur_memory:
-            sync_update_kwargs['memory'] = defn.memory
+            async_update_kwargs['memory'] = defn.memory
             self.log(
                 f"Proxmox VM '{self.name}' changed memory from '{cur_memory}' to '{defn.memory}' MiB")
 
         if defn.nbCpus != cur_cpus:
-            sync_update_kwargs['sockets'] = defn.nbCpus
+            async_update_kwargs['sockets'] = defn.nbCpus
             self.log(
                 f"Proxmox VM '{self.name}' changed number of sockets from '{cur_cpus}' to '{defn.nbCpus}'")
 
         if defn.nbCores != cur_cores:
-            sync_update_kwargs['cores'] = defn.nbCores
+            async_update_kwargs['cores'] = defn.nbCores
             self.log(
                 f"Proxmox VM '{self.name}' changed number of cores from '{cur_cores}' to '{defn.nbCores}'")
 
@@ -719,10 +719,13 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         # TODO: handle misc, e.g. name, numa, onboot, ostype, protection, rng0, serial, smbios1, bios type, startup.
 
         if async_update_kwargs:
+            async_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
             self._connect_vm(instance_id).config.post(async_update_kwargs)
             self.log(
                 f"Proxmox VM '{self.name}' physical definition was re-applied asynchronously")
 
+        # TODO: handle what happens when digest is consumed by async operation?
+        # TODO: what is an operation that have to be done synchronously?
         if sync_update_kwargs:
             sync_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
             self._connect_vm(instance_id).config.put(sync_update_kwargs)
