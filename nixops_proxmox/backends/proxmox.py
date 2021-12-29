@@ -690,21 +690,26 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                 f"Proxmox VM '{self.name}' physical definition changed, cannot use hotplug features to apply changes; use '--allow-reboot' to apply changes")
             return False
 
+        instance = self._connect_vm(instance_id).config.get()
+        cur_memory = int(instance.get("memory"))
+        cur_cpus = int(instance.get("sockets"))
+        cur_cores = int(instance.get("cores"))
+
         # TODO: DRYme with a change engine, maybe the already existing one in NixOps 2.
-        if defn.memory != self.memory:
+        if defn.memory != cur_memory:
             sync_update_kwargs['memory'] = defn.memory
             self.log(
-                f"Proxmox VM '{self.name}' changed memory from '{self.memory}' to '{defn.memory}' MiB")
+                f"Proxmox VM '{self.name}' changed memory from '{cur_memory}' to '{defn.memory}' MiB")
 
-        if defn.nbCpus != self.cpus:
+        if defn.nbCpus != cur_cpus:
             sync_update_kwargs['sockets'] = defn.nbCpus
             self.log(
-                f"Proxmox VM '{self.name}' changed number of sockets from '{self.cpus}' to '{defn.nbCpus}'")
+                f"Proxmox VM '{self.name}' changed number of sockets from '{cur_cpus}' to '{defn.nbCpus}'")
 
-        if defn.nbCores != self.cores:
+        if defn.nbCores != cur_cores:
             sync_update_kwargs['cores'] = defn.cores
             self.log(
-                f"Proxmox VM '{self.name}' changed number of cores from '{self.cores}' to '{defn.nbCores}'")
+                f"Proxmox VM '{self.name}' changed number of cores from '{cur_cores}' to '{defn.nbCores}'")
 
         # TODO: handle network interfaces
         # TODO: handle disks
