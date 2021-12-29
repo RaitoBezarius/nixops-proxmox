@@ -228,7 +228,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         return f"{s}"
 
     @property
-    def resource_id(self):
+    def resource_id(self) -> int:
         return self.vm_id
 
     def address_to(self, m):
@@ -240,6 +240,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
     def _connect(self):
         if self._conn:
             return self._conn
+        assert self.serverUrl is not None, "Cannot connect without any server URL"
         self._conn = nixops_proxmox.proxmox_utils.connect(
                 self.serverUrl, self.username,
                 password=self.password,
@@ -679,6 +680,52 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         else:
             return False
 
+
+    def _apply_physical_vm_changes(self, instance_id: int, defn, allow_reboot: bool, allow_recreate: bool, stopped: bool = False) -> bool:
+        # TODO: hotplug support with NUMA.
+        async_update_kwargs = {}
+        sync_update_kwargs = {}
+        if not allow_reboot and not stopped:
+            self.log(
+                f"Proxmox VM '{self.name}' physical definition changed, cannot use hotplug features to apply changes; use '--allow-reboot' to apply changes")
+            return False
+
+        # TODO: DRYme with a change engine, maybe the already existing one in NixOps 2.
+        if defn.memory != self.memory:
+            sync_update_kwargs['memory'] = defn.memory
+            self.log(
+                f"Proxmox VM '{self.name}' changed memory from '{self.memory}' to '{defn.memory}' MiB")
+
+        if defn.nbCpus != self.cpus:
+            sync_update_kwargs['sockets'] = defn.nbCpus
+            self.log(
+                f"Proxmox VM '{self.name}' changed number of sockets from '{self.cpus}' to '{defn.nbCpus}'")
+
+        if defn.nbCores != self.cores:
+            sync_update_kwargs['cores'] = defn.cores
+            self.log(
+                f"Proxmox VM '{self.name}' changed number of cores from '{self.cores}' to '{defn.nbCores}'")
+
+        # TODO: handle network interfaces
+        # TODO: handle disks
+        # TODO: handle misc, e.g. name, numa, onboot, ostype, protection, rng0, serial, smbios1, bios type, startup.
+
+        if async_update_kwargs:
+            self._connect_vm(instance_id).config.post(async_update_kwargs)
+            self.log(
+                f"Proxmox VM '{self.name}' physical definition was re-applied asynchronously")
+
+        if sync_update_kwargs:
+            self._connect_vm(instance_id).config.put(sync_update_kwargs)
+            self.log(
+                f"Proxmox VM '{self.name}' physical definition was re-applied synchronously")
+
+
+        if not stopped and allow_reboot:
+            self.reboot_sync()
+
+        return True
+
     def create(self, defn: VirtualMachineDefinition, check, allow_reboot, allow_recreate):
         if self.state != self.UP:
             check = True
@@ -727,8 +774,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                             f"Proxmox VM '{self.name}' went away (state: '{instance['status'] if instance else 'gone'}', will recreate")
                     self._reset_state()
             elif instance.get("status") == "stopped":
+                self._apply_physical_vm_changes(self.resource_id, defn, allow_reboot, allow_recreate, stopped=True)
                 self.log(f"Proxmox VM '{self.name}' was stopped, restarting...")
-                # Change the memory allocation.
                 self._reset_network_knowledge()
                 self.start()
 
@@ -736,6 +783,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         if not self.resource_id:
             created = False
             has_user_vmid = defn.vmid is not None
+            vmid = None
             while not created:
                 vmid = defn.vmid or self._get_free_vmid()
                 self.log(
@@ -754,7 +802,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                     else:
                         print('Failure', e)
 
-
+            assert vmid is not None, "BUG: VMID is None"
             with self.depl._db:
                 self.vm_id = int(vmid)
                 self.memory = defn.memory
@@ -778,6 +826,10 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         self.wait_for_qemu_agent()
         self.state = self.RESCUE if self.is_in_live_cd() else self.UP
+
+        # physical VM definition has changed?
+        if self.state == self.UP and (defn.memory != self.memory or defn.cpus != defn.nbCpus or defn.cores != defn.nbCores):
+            self._apply_physical_vm_changes(self.resource_id, defn, allow_reboot, allow_recreate, stopped=False)
 
         # provision ourselves through agent only if we are in a live CD.
         if self.state == self.RESCUE:
