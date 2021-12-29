@@ -725,8 +725,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             self.log(
                 f"Proxmox VM '{self.name}' physical definition was re-applied synchronously")
 
-
-        if not stopped and allow_reboot:
+        if not stopped and allow_reboot and (async_update_kwargs or sync_update_kwargs):
             self.reboot_sync()
 
         return True
@@ -833,7 +832,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         self.state = self.RESCUE if self.is_in_live_cd() else self.UP
 
         # physical VM definition has changed?
-        if self.state == self.UP and (defn.memory != self.memory or defn.cpus != defn.nbCpus or defn.cores != defn.nbCores):
+        if self.state == self.UP:
             self._apply_physical_vm_changes(self.resource_id, defn, allow_reboot, allow_recreate, stopped=False)
 
         # provision ourselves through agent only if we are in a live CD.
