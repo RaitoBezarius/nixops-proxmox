@@ -692,8 +692,10 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         instance = self._connect_vm(instance_id).config.get()
         cur_memory = int(instance.get("memory"))
-        cur_cpus = int(instance.get("sockets"))
-        cur_cores = int(instance.get("cores"))
+        cur_cpus = int(instance.get("sockets", 1))
+        cur_cores = int(instance.get("cores", 1))
+        hotplug_support = bool(instance.get('hotplug', 0)) # TODO: later.
+        numa_enabled = bool(instance.get('numa', 0)) # TODO: later.
 
         # TODO: DRYme with a change engine, maybe the already existing one in NixOps 2.
         if defn.memory != cur_memory:
@@ -933,14 +935,14 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         def check_stopped():
             instance = self._get_instance(update=True)
-            self.log_continue(f"[{instance['state']}]")
+            self.log_continue(f"[{instance['status']}]")
 
-            if instance['state'] == 'stopped':
+            if instance['status'] == 'stopped':
                 return True
 
-            if instance['state'] != "running":
+            if instance['status'] != "running":
                 raise Exception(
-                    f"Proxmox VM '{self.vm_id}' failed to stop (state is '{instance['state']}')"
+                    f"Proxmox VM '{self.vm_id}' failed to stop (state is '{instance['status']}')"
                 )
 
             return False
