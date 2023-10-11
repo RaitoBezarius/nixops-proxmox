@@ -14,7 +14,7 @@ self: super: {
     }
   );
 
-  cryptography = super.cryptography.overridePythonAttrs (
+  /*cryptography = super.cryptography.overridePythonAttrs (
     old: {
       nativeBuildInputs = (old.nativeBuildInputs or [ ])
         ++ lib.optional (lib.versionAtLeast old.version "3.4") [ self.setuptools-rust ]
@@ -41,5 +41,5 @@ self: super: {
         };
       cargoRoot = "src/rust";
     }
-  );
+  );*/
 }

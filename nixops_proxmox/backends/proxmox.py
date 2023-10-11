@@ -8,6 +8,7 @@ import nixops.known_hosts
 from ipaddress import ip_address, IPv4Address, IPv6Address
 from itertools import dropwhile, takewhile, chain
 import nixops_proxmox.proxmox_utils
+from nixops_proxmox.utils.parameter_generators import generate_disk_parameters, generate_ip_parameters, generate_network_parameters
 from proxmoxer.core import ResourceException
 from nixops.ssh_util import SSHCommandFailed, SSH
 import nixops.util
@@ -569,36 +570,17 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             options[f"arch"] = defn.arch
 
         for index, net in enumerate(defn.network):
-            options[f"net{index}"] = (",".join(
-            [
-                f"model={net.model}",
-                f"bridge={net.bridge}"
-            ]
-            + ([f"tag={net.tag}"] if net.tag else [])
-            + ([f"trunks={';'.join(net.trunks)}"] if net.trunks else [])))
+            options[f"net{index}"] = generate_network_parameters(net)
+            ip_params = generate_ip_parameters(net)
 
-            if net.ip:
-                ipConfig = []
-                if net.ip.v4:
-                    ipConfig.append(f"gw={net.ip.v4.gateway}")
-                    ipConfig.append(f"ip={net.ip.v4.address}/{net.ip.v4.prefixLength}")
-                if net.ip.v6:
-                    ipConfig.append(f"gw6={net.ip.v6.gateway}")
-                    ipConfig.append(f"ip6={net.ip.v6.address}/{net.ip.v6.prefixLength}")
-                if ipConfig:
-                    options[f"ipconfig{index}"] = ",".join(ipConfig)
+            if ip_params:
+                options[f"ipconfig{index}"] = ip_params
 
 
         max_indexes = defaultdict(lambda: 0)
         for index, disk in enumerate(defn.disks):
             filename = f"vm-{vmid}-disk-{index}"
-            options[f"scsi{index}"] = (",".join([
-                f"file={disk.volume}:{filename}",
-                f"size={disk.size}",
-                f"ssd={1 if disk.enableSSDEmulation else 0}",
-                f"discard={'on' if disk.enableDiscard else 'ignore'}"
-            ]
-            + ([f"aio={disk.aio}"] if disk.aio else [])))
+            options[f"scsi{index}"] = generate_disk_parameters(filename, disk)
             self._allocate_disk_image(filename, disk.size, disk.volume, vmid)
             max_indexes[disk.volume] += 1
 
@@ -686,18 +668,42 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         # TODO: hotplug support with NUMA.
         async_update_kwargs = {}
         sync_update_kwargs = {}
-        if not allow_reboot and not stopped:
+
+        instance = self._connect_vm(instance_id).config.get()
+
+        # By default, disk and networks are hotpluggables.
+        supported_hotplugs = parse_hotplug_value(instance.get('hotplug', 0))
+        numa_enabled = bool(instance.get('numa', 0))
+
+        # iterate over all scsi*, look at our disks in order, compare.
+        # iterate over all net*, look at our nets in order, compare.
+
+        mappings = {
+            'memory': InstanceMapping.from_simple('memory'),
+            'cpu': InstanceMapping.from_dict({
+                'nbCpus': 'sockets',
+                'nbCores': 'cores'
+            }),
+            'disk': InstanceMapping.from_regex('disks', r'scsi\d', instance),
+            'network': InstanceMapping.from_regex('network', r'net\d', instance)
+        }
+
+        # for all checks
+        require_reboot = not is_hotplug_enough(
+            mappings,
+            supported_hotplugs,
+            numa_enabled
+        )
+
+        if require_reboot and not allow_reboot and not stopped:
             self.log(
                 f"Proxmox VM '{self.name}' physical definition changed, cannot use hotplug features to apply changes; use '--allow-reboot' to apply changes")
             return False
 
-        instance = self._connect_vm(instance_id).config.get()
+        # Determine async capability based on hotpluggability and requirements for storage allocation.
         cur_memory = int(instance.get("memory"))
         cur_cpus = int(instance.get("sockets", 1))
         cur_cores = int(instance.get("cores", 1))
-        hotplug_support = bool(instance.get('hotplug', 0)) # TODO: later.
-        numa_enabled = bool(instance.get('numa', 0)) # TODO: later.
-
         # TODO: DRYme with a change engine, maybe the already existing one in NixOps 2.
         if defn.memory != cur_memory:
             sync_update_kwargs['memory'] = defn.memory
@@ -714,7 +720,10 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             self.log(
                 f"Proxmox VM '{self.name}' changed number of cores from '{cur_cores}' to '{defn.nbCores}'")
 
-
+        # If a disk has changed:
+            # check if we can access the volume and/or it does exist.
+            # if we cannot access the volume, allocate it.
+            # async update.
         # TODO: handle network interfaces
         # TODO: handle disks
         # TODO: handle misc, e.g. name, numa, onboot, ostype, protection, rng0, serial, smbios1, bios type, startup.
@@ -733,7 +742,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             self.log(
                 f"Proxmox VM '{self.name}' physical definition was re-applied synchronously")
 
-        if not stopped and allow_reboot and (async_update_kwargs or sync_update_kwargs):
+        has_changed = len(async_update_kwargs) > 0 or len(sync_update_kwargs) > 0
+        if not stopped and allow_reboot and has_changed:
             self.reboot_sync()
 
         return True
