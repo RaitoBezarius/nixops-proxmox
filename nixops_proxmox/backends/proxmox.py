@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import time
+import json
 from nixops.backends import MachineDefinition, MachineState
 from nixops.nix_expr import Function, Call, RawValue, py2nix
 from typing import Optional
@@ -7,6 +8,7 @@ import nixops.known_hosts
 from ipaddress import ip_address, IPv4Address, IPv6Address
 from itertools import dropwhile, takewhile, chain
 import nixops_proxmox.proxmox_utils
+from nixops_proxmox.utils.parameter_generators import generate_disk_parameters, generate_ip_parameters, generate_network_parameters
 from proxmoxer.core import ResourceException
 from nixops.ssh_util import SSHCommandFailed, SSH
 import nixops.util
@@ -228,7 +230,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         return f"{s}"
 
     @property
-    def resource_id(self):
+    def resource_id(self) -> int:
         return self.vm_id
 
     def address_to(self, m):
@@ -240,6 +242,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
     def _connect(self):
         if self._conn:
             return self._conn
+        assert self.serverUrl is not None, "Cannot connect without any server URL"
         self._conn = nixops_proxmox.proxmox_utils.connect(
                 self.serverUrl, self.username,
                 password=self.password,
@@ -567,36 +570,17 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
             options[f"arch"] = defn.arch
 
         for index, net in enumerate(defn.network):
-            options[f"net{index}"] = (",".join(
-            [
-                f"model={net.model}",
-                f"bridge={net.bridge}"
-            ]
-            + ([f"tag={net.tag}"] if net.tag else [])
-            + ([f"trunks={';'.join(net.trunks)}"] if net.trunks else [])))
+            options[f"net{index}"] = generate_network_parameters(net)
+            ip_params = generate_ip_parameters(net)
 
-            if net.ip:
-                ipConfig = []
-                if net.ip.v4:
-                    ipConfig.append(f"gw={net.ip.v4.gateway}")
-                    ipConfig.append(f"ip={net.ip.v4.address}/{net.ip.v4.prefixLength}")
-                if net.ip.v6:
-                    ipConfig.append(f"gw6={net.ip.v6.gateway}")
-                    ipConfig.append(f"ip6={net.ip.v6.address}/{net.ip.v6.prefixLength}")
-                if ipConfig:
-                    options[f"ipconfig{index}"] = ",".join(ipConfig)
+            if ip_params:
+                options[f"ipconfig{index}"] = ip_params
 
 
         max_indexes = defaultdict(lambda: 0)
         for index, disk in enumerate(defn.disks):
             filename = f"vm-{vmid}-disk-{index}"
-            options[f"scsi{index}"] = (",".join([
-                f"file={disk.volume}:{filename}",
-                f"size={disk.size}",
-                f"ssd={1 if disk.enableSSDEmulation else 0}",
-                f"discard={'on' if disk.enableDiscard else 'ignore'}"
-            ]
-            + ([f"aio={disk.aio}"] if disk.aio else [])))
+            options[f"scsi{index}"] = generate_disk_parameters(filename, disk)
             self._allocate_disk_image(filename, disk.size, disk.volume, vmid)
             max_indexes[disk.volume] += 1
 
@@ -679,6 +663,91 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         else:
             return False
 
+
+    def _apply_physical_vm_changes(self, instance_id: int, defn, allow_reboot: bool, allow_recreate: bool, stopped: bool = False) -> bool:
+        # TODO: hotplug support with NUMA.
+        async_update_kwargs = {}
+        sync_update_kwargs = {}
+
+        instance = self._connect_vm(instance_id).config.get()
+
+        # By default, disk and networks are hotpluggables.
+        supported_hotplugs = parse_hotplug_value(instance.get('hotplug', 0))
+        numa_enabled = bool(instance.get('numa', 0))
+
+        # iterate over all scsi*, look at our disks in order, compare.
+        # iterate over all net*, look at our nets in order, compare.
+
+        mappings = {
+            'memory': InstanceMapping.from_simple('memory'),
+            'cpu': InstanceMapping.from_dict({
+                'nbCpus': 'sockets',
+                'nbCores': 'cores'
+            }),
+            'disk': InstanceMapping.from_regex('disks', r'scsi\d', instance),
+            'network': InstanceMapping.from_regex('network', r'net\d', instance)
+        }
+
+        # for all checks
+        require_reboot = not is_hotplug_enough(
+            mappings,
+            supported_hotplugs,
+            numa_enabled
+        )
+
+        if require_reboot and not allow_reboot and not stopped:
+            self.log(
+                f"Proxmox VM '{self.name}' physical definition changed, cannot use hotplug features to apply changes; use '--allow-reboot' to apply changes")
+            return False
+
+        # Determine async capability based on hotpluggability and requirements for storage allocation.
+        cur_memory = int(instance.get("memory"))
+        cur_cpus = int(instance.get("sockets", 1))
+        cur_cores = int(instance.get("cores", 1))
+        # TODO: DRYme with a change engine, maybe the already existing one in NixOps 2.
+        if defn.memory != cur_memory:
+            sync_update_kwargs['memory'] = defn.memory
+            self.log(
+                f"Proxmox VM '{self.name}' changed memory from '{cur_memory}' to '{defn.memory}' MiB")
+
+        if defn.nbCpus != cur_cpus:
+            sync_update_kwargs['sockets'] = defn.nbCpus
+            self.log(
+                f"Proxmox VM '{self.name}' changed number of sockets from '{cur_cpus}' to '{defn.nbCpus}'")
+
+        if defn.nbCores != cur_cores:
+            sync_update_kwargs['cores'] = defn.nbCores
+            self.log(
+                f"Proxmox VM '{self.name}' changed number of cores from '{cur_cores}' to '{defn.nbCores}'")
+
+        # If a disk has changed:
+            # check if we can access the volume and/or it does exist.
+            # if we cannot access the volume, allocate it.
+            # async update.
+        # TODO: handle network interfaces
+        # TODO: handle disks
+        # TODO: handle misc, e.g. name, numa, onboot, ostype, protection, rng0, serial, smbios1, bios type, startup.
+
+        if async_update_kwargs:
+            async_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
+            self._connect_vm(instance_id).config.post(**async_update_kwargs)
+            self.log(
+                f"Proxmox VM '{self.name}' physical definition was re-applied asynchronously")
+
+        # TODO: handle what happens when digest is consumed by async operation?
+        # TODO: what is an operation that have to be done synchronously?
+        if sync_update_kwargs:
+            sync_update_kwargs['digest'] = instance.get('digest') # Protect against concurrent modifications.
+            self._connect_vm(instance_id).config.put(**sync_update_kwargs)
+            self.log(
+                f"Proxmox VM '{self.name}' physical definition was re-applied synchronously")
+
+        has_changed = len(async_update_kwargs) > 0 or len(sync_update_kwargs) > 0
+        if not stopped and allow_reboot and has_changed:
+            self.reboot_sync()
+
+        return True
+
     def create(self, defn: VirtualMachineDefinition, check, allow_reboot, allow_recreate):
         if self.state != self.UP:
             check = True
@@ -727,8 +796,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                             f"Proxmox VM '{self.name}' went away (state: '{instance['status'] if instance else 'gone'}', will recreate")
                     self._reset_state()
             elif instance.get("status") == "stopped":
+                self._apply_physical_vm_changes(self.resource_id, defn, allow_reboot, allow_recreate, stopped=True)
                 self.log(f"Proxmox VM '{self.name}' was stopped, restarting...")
-                # Change the memory allocation.
                 self._reset_network_knowledge()
                 self.start()
 
@@ -736,6 +805,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         if not self.resource_id:
             created = False
             has_user_vmid = defn.vmid is not None
+            vmid = None
             while not created:
                 vmid = defn.vmid or self._get_free_vmid()
                 self.log(
@@ -754,7 +824,7 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
                     else:
                         print('Failure', e)
 
-
+            assert vmid is not None, "BUG: VMID is None"
             with self.depl._db:
                 self.vm_id = int(vmid)
                 self.memory = defn.memory
@@ -778,6 +848,10 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         self.wait_for_qemu_agent()
         self.state = self.RESCUE if self.is_in_live_cd() else self.UP
+
+        # physical VM definition has changed?
+        if self.state == self.UP:
+            self._apply_physical_vm_changes(self.resource_id, defn, allow_reboot, allow_recreate, stopped=False)
 
         # provision ourselves through agent only if we are in a live CD.
         if self.state == self.RESCUE:
@@ -875,14 +949,14 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
 
         def check_stopped():
             instance = self._get_instance(update=True)
-            self.log_continue(f"[{instance['state']}]")
+            self.log_continue(f"[{instance['status']}]")
 
-            if instance['state'] == 'stopped':
+            if instance['status'] == 'stopped':
                 return True
 
-            if instance['state'] != "running":
+            if instance['status'] != "running":
                 raise Exception(
-                    f"Proxmox VM '{self.vm_id}' failed to stop (state is '{instance['state']}')"
+                    f"Proxmox VM '{self.vm_id}' failed to stop (state is '{instance['status']}')"
                 )
 
             return False
@@ -903,11 +977,13 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
     def start(self):
         self.log("starting Proxmox VM machine...")
 
-        self._connect_vm().status.start()
+        self._connect_vm().status.start.post()
         self.state = self.STARTING
-        with self._check_ip_changes() as old_addresses:
-            self._wait_for_ip()
-            self._warn_for_ip_changes(old_addresses)
+        self.wait_for_qemu_agent()
+        self._wait_for_ip()
+        #with self._check_ip_changes() as old_addresses:
+        #    self._wait_for_ip()
+        #    self._warn_for_ip_changes(old_addresses)
         self.wait_for_ssh(check=True)
         self.send_keys()
 
@@ -929,6 +1005,8 @@ class VirtualMachineState(MachineState[VirtualMachineDefinition]):
         if instance["status"] == "running":
             res.is_up = True
             res.disks_ok = True
+            self.wait_for_qemu_agent()
+            self._wait_for_ip()
             #with self._check_ip_changes() as addresses:
             #    self._wait_for_ip()
             #    self._warn_for_ip_changes(addresses)
