@@ -1,4 +1,7 @@
-# NixOps plugin for Proxmox
+# NixOps plugin for Proxmox (DEPRECATED)
+
+**2023 update** : This project is now deprecated. I moved away from Proxmox and NixOps because it is difficult to maintain the desired guarantees in those ecosystems with the way Nixpkgs is moving.
+If you are still interested into professional solutions for Proxmox with NixOS, please reach out to me, I have much better ideas on how to achieve interesting results with Proxmox and declarative state, unfortunately, it is hard to work on nixops-proxmox *and* NixOps (and sometimes even *Proxmox*!) at the same time. I decided to go for https://github.com/astro/microvm.nix for the future of my infrastructure while taking the problem in the other direction: make Nix expressions easy to manipulate from a web UI rather than making state be manipulated by Nix expression and an diffing engine.
 
 This plugin enable you to deploy and provision NixOS machines on a Proxmox node, with full control over the parameters of the virtual machine.
 
